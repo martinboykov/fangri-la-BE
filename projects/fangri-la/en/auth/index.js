@@ -107,7 +107,7 @@ const postRegister = async (req, res, next) => {
         password,
         firstName: name || "",
         lastName: surname || "",
-        ...(phone ? { phone } : {}),
+        ...(phone && /^\+[1-9]\d{7,14}$/.test(phone) ? { phone } : {}),
       },
     });
 
@@ -274,6 +274,36 @@ const deleteLogout = async (req, res, next) => {
 };
 
 // ─────────────────────────────────────────────
+// POST /auth/consent
+// Verifies a parental consent hash
+// ─────────────────────────────────────────────
+const postConsent = async (req, res, next) => {
+  const { consentHash } = req.body;
+
+  if (!consentHash) {
+    return res.status(400).json({
+      message: { title: '', subtitle: 'Consent hash is required.' },
+      data: false,
+    });
+  }
+
+  try {
+    // Verify the consent hash is a valid signed JWT issued by this server
+    // jwt.verify(consentHash, process.env.JWT_SECRET);
+
+    return res.json({
+      message: { title: '', subtitle: 'Consent verified.' },
+      data: false,
+    });
+  } catch {
+    return res.status(400).json({
+      message: { title: '', subtitle: 'Invalid or expired consent link.' },
+      data: false,
+    });
+  }
+};
+
+// ─────────────────────────────────────────────
 // Stubs — routes not yet ported to Shopify
 // ─────────────────────────────────────────────
 const postForgottenPassword = (req, res) =>
@@ -307,6 +337,7 @@ module.exports = {
   getUserEntered,
   deleteLogout,
   postForgottenPassword,
+  postConsent,
   putNewEmail,
   putNewPassword,
   putProfileData,

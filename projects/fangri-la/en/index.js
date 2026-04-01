@@ -16,6 +16,7 @@ router.get('/auth/me', authController.getMe);
 router.post('/auth/login', authController.postLogin);
 router.post('/auth/register', authController.postRegister);
 router.post('/auth/forgotten-password', authController.postForgottenPassword);
+router.post('/auth/consent', authController.postConsent);
 
 router.put('/auth/new-email', authController.putNewEmail);
 router.put('/auth/new-password', authController.putNewPassword);
