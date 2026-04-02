@@ -48,6 +48,8 @@ router.get('/customer/address', customerController.getCustomerAddress);
 router.post('/customer/address', customerController.saveCustomerAddress);
 router.get('/customer/orders', customerController.getCustomerOrders);
 router.get('/customer/orders/:orderNumber', customerController.getCustomerOrder);
+router.get('/customer/notifications', customerController.getCustomerNotifications);
+router.post('/customer/notifications', customerController.saveCustomerNotifications);
 
 // ─────────────────────────────────────────────
 // Existing routes (vault, artists)

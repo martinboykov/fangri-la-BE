@@ -7,6 +7,11 @@ const { storefrontQuery } = require('../../../utils/shopify-storefront');
 // ─────────────────────────────────────────────
 const customerCartStore = new Map();
 
+// ─────────────────────────────────────────────
+// In-memory notification preferences store: email → { email, sms, push }
+// ─────────────────────────────────────────────
+const customerNotificationsStore = new Map();
+
 /** Extract and verify JWT payload, or return null */
 function getPayload(req) {
   const authHeader = req.headers['authorization'];
@@ -241,4 +246,31 @@ const getCustomerOrder = async (req, res) => {
   }
 };
 
-module.exports = { saveCustomerCart, getCustomerCart, getCustomerAddress, saveCustomerAddress, getCustomerOrders, getCustomerOrder };
+// ─────────────────────────────────────────────
+// GET /customer/notifications  — fetch notification preferences
+// ─────────────────────────────────────────────
+const getCustomerNotifications = (req, res) => {
+  const payload = getPayload(req);
+  if (!payload) return res.status(401).json({ error: 'Authentication required' });
+
+  const prefs = customerNotificationsStore.get(payload.email) ?? { email: true, sms: true, push: true };
+  res.json(prefs);
+};
+
+// ─────────────────────────────────────────────
+// POST /customer/notifications  — save notification preferences
+// ─────────────────────────────────────────────
+const saveCustomerNotifications = (req, res) => {
+  const payload = getPayload(req);
+  if (!payload) return res.status(401).json({ error: 'Authentication required' });
+
+  const { email, sms, push } = req.body;
+  customerNotificationsStore.set(payload.email, {
+    email: Boolean(email),
+    sms: Boolean(sms),
+    push: Boolean(push),
+  });
+  res.json({ success: true });
+};
+
+module.exports = { saveCustomerCart, getCustomerCart, getCustomerAddress, saveCustomerAddress, getCustomerOrders, getCustomerOrder, getCustomerNotifications, saveCustomerNotifications };
