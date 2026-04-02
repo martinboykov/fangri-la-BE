@@ -46,6 +46,8 @@ router.post('/customer/cart', customerController.saveCustomerCart);
 router.get('/customer/cart', customerController.getCustomerCart);
 router.get('/customer/address', customerController.getCustomerAddress);
 router.post('/customer/address', customerController.saveCustomerAddress);
+router.get('/customer/orders', customerController.getCustomerOrders);
+router.get('/customer/orders/:orderNumber', customerController.getCustomerOrder);
 
 // ─────────────────────────────────────────────
 // Existing routes (vault, artists)

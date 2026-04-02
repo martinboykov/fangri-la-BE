@@ -126,4 +126,119 @@ const saveCustomerAddress = async (req, res) => {
   }
 };
 
-module.exports = { saveCustomerCart, getCustomerCart, getCustomerAddress, saveCustomerAddress };
+// ─────────────────────────────────────────────
+// GET /customer/orders  — paginated list of customer orders from Shopify
+// Query params: first (max 30), after (cursor)
+// ─────────────────────────────────────────────
+const getCustomerOrders = async (req, res) => {
+  const payload = getPayload(req);
+  if (!payload) return res.status(401).json({ error: 'Authentication required' });
+
+  const first = Math.min(parseInt(req.query.first) || 30, 30);
+  const after = req.query.after || null;
+
+  const query = `
+    query getCustomerOrders($accessToken: String!, $first: Int!, $after: String) {
+      customer(customerAccessToken: $accessToken) {
+        orders(first: $first, after: $after, sortKey: PROCESSED_AT, reverse: true) {
+          pageInfo { hasNextPage endCursor }
+          edges {
+            node {
+              id
+              name
+              orderNumber
+              processedAt
+              fulfillmentStatus
+              totalPrice { amount currencyCode }
+              lineItems(first: 10) {
+                edges {
+                  node {
+                    title
+                    quantity
+                    variant {
+                      image { url altText }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const data = await storefrontQuery(query, {
+      accessToken: payload.customerAccessToken,
+      first,
+      ...(after ? { after } : {}),
+    });
+    const orders = data?.customer?.orders ?? { edges: [], pageInfo: { hasNextPage: false, endCursor: null } };
+    res.json(orders);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch orders' });
+  }
+};
+
+// ─────────────────────────────────────────────
+// GET /customer/orders/:orderNumber  — single order detail
+// :orderNumber is the integer order number (e.g. 1013)
+// ─────────────────────────────────────────────
+const getCustomerOrder = async (req, res) => {
+  const payload = getPayload(req);
+  if (!payload) return res.status(401).json({ error: 'Authentication required' });
+
+  const orderNumber = req.params.orderNumber;
+
+  const query = `
+    query getCustomerOrder($accessToken: String!, $query: String!) {
+      customer(customerAccessToken: $accessToken) {
+        orders(first: 1, query: $query) {
+          edges {
+            node {
+              id
+              name
+              orderNumber
+              processedAt
+              fulfillmentStatus
+              totalPrice { amount currencyCode }
+              subtotalPrice { amount currencyCode }
+              totalShippingPrice { amount currencyCode }
+              email
+              phone
+              shippingAddress { firstName lastName address1 city province country zip }
+              billingAddress { firstName lastName address1 city province country zip }
+              lineItems(first: 50) {
+                edges {
+                  node {
+                    title
+                    quantity
+                    variant {
+                      image { url altText }
+                      price { amount currencyCode }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const data = await storefrontQuery(query, {
+      accessToken: payload.customerAccessToken,
+      query: `name:#${orderNumber}`,
+    });
+    const edges = data?.customer?.orders?.edges ?? [];
+    if (!edges.length) return res.status(404).json({ error: 'Order not found' });
+    res.json(edges[0].node);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch order' });
+  }
+};
+
+module.exports = { saveCustomerCart, getCustomerCart, getCustomerAddress, saveCustomerAddress, getCustomerOrders, getCustomerOrder };
