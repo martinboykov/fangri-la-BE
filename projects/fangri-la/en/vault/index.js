@@ -46,6 +46,7 @@ const getVaultItem = (req, res, next) => {
           isUsed: false,
           isOwner: false,
           shopifyProductId: '9289573761283',
+          dropImage: '/assets/static/images/artists/caden_kane/caden_kane_1080x1350_6_Walking_with_Crew_at_Night_in_NYC.png',
         },
       });
     },
@@ -71,7 +72,10 @@ const getVaultItems = (req, res, next) => {
     () => {
       return res.status(200).json({
         data: {
-          items: allVaultItems.slice(firstPage, firstPage + itemsPerPage),
+          items: allVaultItems.slice(firstPage, firstPage + itemsPerPage).map((item, index) => ({
+            ...item,
+            dropImage: '/assets/static/images/artists/caden_kane/caden_kane_1080x1350_6_Walking_with_Crew_at_Night_in_NYC.png'
+          })),
           hasNextPage: allVaultItems.length > firstPage + itemsPerPage,
           totalCount: allVaultItems.length,
         },

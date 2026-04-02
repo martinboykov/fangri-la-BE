@@ -44,6 +44,8 @@ router.get('/cart/:cartId/checkout-url', cartController.getCheckoutUrl);
 // ─────────────────────────────────────────────
 router.post('/customer/cart', customerController.saveCustomerCart);
 router.get('/customer/cart', customerController.getCustomerCart);
+router.get('/customer/address', customerController.getCustomerAddress);
+router.post('/customer/address', customerController.saveCustomerAddress);
 
 // ─────────────────────────────────────────────
 // Existing routes (vault, artists)
