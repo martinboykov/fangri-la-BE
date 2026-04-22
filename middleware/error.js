@@ -1,13 +1,6 @@
-const debug = require('debug')('debug');
-
 module.exports = function(err, req, res, next) {
-  // Log the error/exeption inside of express
-  if (process.ENV === 'production') {
-    debug(err.message, err);
-  } else { // process.ENV === 'development'
-    debug(err.message, err);
-  }
-
-  // Send res to client
-  return res.status(500).json({ message: 'Something failed' });
+  console.error(err.message, err);
+  return res.status(500).json({
+    message: { title: '', subtitle: 'Something went wrong. Please try again.' },
+  });
 };
