@@ -573,6 +573,256 @@ const postFacebookRegister = async (req, res, next) => {
 };
 
 // ─────────────────────────────────────────────
+// Google helpers
+// ─────────────────────────────────────────────
+
+/**
+ * Deterministic password derived from the Google user id + JWT secret.
+ * Same scheme as Facebook but with a "google:" prefix so the two namespaces
+ * never collide even if a user somehow has the same numeric id in both systems.
+ */
+function deriveGooglePassword(googleUserId) {
+  if (!googleUserId) throw new Error("googleUserId required");
+  return crypto
+    .createHmac("sha256", process.env.JWT_SECRET)
+    .update(`google:${googleUserId}`)
+    .digest("hex")
+    .slice(0, 40);
+}
+
+/**
+ * Verify a Google ID token via Google's tokeninfo endpoint and return the
+ * decoded claims. Validates that:
+ *  - the token is genuine (Google's servers confirm it)
+ *  - the audience matches our client ID (prevents token substitution)
+ *  - the email has been verified by Google
+ */
+async function verifyGoogleIdToken(idToken) {
+  if (!idToken) {
+    const err = new Error("Google ID token is required");
+    err.status = 400;
+    throw err;
+  }
+  const url = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`;
+  const resp = await fetch(url);
+  const data = await resp.json();
+
+  if (!resp.ok || data.error_description || !data.sub) {
+    const err = new Error(data.error_description || "Invalid Google ID token");
+    err.status = 401;
+    throw err;
+  }
+
+  const expectedAud = process.env.GOOGLE_CLIENT_ID;
+  if (expectedAud && data.aud !== expectedAud) {
+    const err = new Error("Google token audience mismatch");
+    err.status = 401;
+    throw err;
+  }
+
+  if (data.email_verified !== "true" && data.email_verified !== true) {
+    const err = new Error("Google account email is not verified");
+    err.status = 401;
+    throw err;
+  }
+
+  return data; // { sub, email, name, given_name, family_name, picture, aud, ... }
+}
+
+// ─────────────────────────────────────────────
+// POST /auth/google
+// Exchange a Google ID token for a Fangri-la session.
+// If the customer exists log them in; otherwise return `registered: false`
+// with the Google profile so the frontend can redirect to the register page.
+// ─────────────────────────────────────────────
+const postGoogleAuth = async (req, res, next) => {
+  const { idToken, userId } = req.body || {};
+
+  try {
+    const google = await verifyGoogleIdToken(idToken);
+
+    // Sanity-check: client-supplied userId must match the token's subject.
+    if (userId && String(userId) !== String(google.sub)) {
+      const err = new Error("Google user id mismatch");
+      err.status = 401;
+      throw err;
+    }
+
+    const email = google.email || req.body?.email || null;
+
+    if (!email) {
+      return res.status(200).json({
+        registered: false,
+        message: {
+          title: "",
+          subtitle:
+            "Google did not share an email address. Please complete registration.",
+        },
+        data: {
+          googleUserId: google.sub,
+          idToken,
+          email: "",
+          firstName: google.given_name || "",
+          lastName: google.family_name || "",
+          picture: google.picture || "",
+        },
+      });
+    }
+
+    let existing = null;
+    try {
+      existing = await findCustomerByEmail(email);
+    } catch {
+      // Admin API unavailable — treat as unregistered.
+    }
+
+    if (!existing) {
+      return res.status(200).json({
+        registered: false,
+        message: { title: "", subtitle: "" },
+        data: {
+          googleUserId: google.sub,
+          idToken,
+          email,
+          firstName: google.given_name || "",
+          lastName: google.family_name || "",
+          picture: google.picture || "",
+        },
+      });
+    }
+
+    // Overwrite the Shopify password with the deterministic Google-derived one
+    // so we can always mint a customerAccessToken from the server side.
+    const googlePassword = deriveGooglePassword(google.sub);
+    await setCustomerPassword(existing.id, googlePassword);
+
+    const shopifyToken = await createShopifyToken(email, googlePassword);
+    const jwtToken = jwt.sign(
+      { customerAccessToken: shopifyToken.accessToken, email },
+      process.env.JWT_SECRET,
+      { expiresIn: "30d" },
+    );
+
+    return res.status(200).json({
+      registered: true,
+      ...buildUserResponse(existing, jwtToken, shopifyToken.expiresAt),
+    });
+  } catch (err) {
+    const clientStatus = err.status >= 400 && err.status < 500 ? err.status : null;
+    if (clientStatus) {
+      return res
+        .status(clientStatus)
+        .json({ message: { title: "", subtitle: err.message } });
+    }
+    next(err);
+  }
+};
+
+// ─────────────────────────────────────────────
+// POST /auth/google/register
+// Complete registration for a user coming from the Google flow.
+// Verifies the ID token, creates the Shopify customer with a deterministic
+// Google-derived password, and returns a login response.
+// ─────────────────────────────────────────────
+const postGoogleRegister = async (req, res, next) => {
+  const { idToken, googleUserId, email, name, surname, phone } = req.body || {};
+
+  if (!email) {
+    return res
+      .status(400)
+      .json({ message: { title: "", subtitle: "email is required" } });
+  }
+
+  try {
+    const google = await verifyGoogleIdToken(idToken);
+
+    if (googleUserId && String(googleUserId) !== String(google.sub)) {
+      return res.status(400).json({
+        message: { title: "", subtitle: "Google user id mismatch" },
+      });
+    }
+
+    const googleEmail = google.email || email;
+    if (googleEmail && googleEmail !== email) {
+      return res.status(400).json({
+        message: { title: "", subtitle: "Email does not match Google profile" },
+      });
+    }
+
+    const googlePassword = deriveGooglePassword(google.sub);
+
+    const createMutation = `
+      mutation customerCreate($input: CustomerCreateInput!) {
+        customerCreate(input: $input) {
+          customer { id email firstName lastName phone }
+          customerUserErrors { code field message }
+        }
+      }
+    `;
+    const createData = await storefrontQuery(createMutation, {
+      input: {
+        email,
+        password: googlePassword,
+        firstName: name || google.given_name || "",
+        lastName: surname || google.family_name || "",
+        ...(phone && /^\+[1-9]\d{7,14}$/.test(phone) ? { phone } : {}),
+      },
+    });
+
+    let customer;
+    let shopifyToken;
+
+    const createErrors = createData.customerCreate.customerUserErrors;
+
+    if (createErrors.length === 0) {
+      customer = createData.customerCreate.customer;
+      // setCustomerPassword activates the account so we can mint a token immediately.
+      await setCustomerPassword(customer.id, googlePassword);
+      shopifyToken = await createShopifyToken(email, googlePassword);
+    } else if (createErrors[0].code === "TAKEN") {
+      // Email already registered — try the Google-derived password first.
+      try {
+        shopifyToken = await createShopifyToken(email, googlePassword);
+        const profile = await fetchCustomerProfile(shopifyToken.accessToken);
+        customer = profile || { id: email, email, firstName: name || "", lastName: surname || "", phone: "" };
+      } catch {
+        // Different password — overwrite via Admin API.
+        const existing = await findCustomerByEmail(email);
+        if (!existing) {
+          const err = new Error("Customer not found");
+          err.status = 404;
+          throw err;
+        }
+        await setCustomerPassword(existing.id, googlePassword);
+        shopifyToken = await createShopifyToken(email, googlePassword);
+        customer = existing;
+      }
+    } else {
+      const errMsg = createErrors[0].message;
+      return res.status(422).json({ message: { title: "", subtitle: errMsg } });
+    }
+
+    const jwtToken = jwt.sign(
+      { customerAccessToken: shopifyToken.accessToken, email },
+      process.env.JWT_SECRET,
+      { expiresIn: "30d" },
+    );
+
+    return res
+      .status(201)
+      .json(buildUserResponse(customer, jwtToken, shopifyToken.expiresAt));
+  } catch (err) {
+    const clientStatus = err.status >= 400 && err.status < 500 ? err.status : null;
+    if (clientStatus) {
+      return res
+        .status(clientStatus)
+        .json({ message: { title: "", subtitle: err.message } });
+    }
+    next(err);
+  }
+};
+
+// ─────────────────────────────────────────────
 // POST /auth/consent
 // Verifies a parental consent hash
 // ─────────────────────────────────────────────
@@ -634,6 +884,8 @@ module.exports = {
   postLogin,
   postFacebookAuth,
   postFacebookRegister,
+  postGoogleAuth,
+  postGoogleRegister,
   getMe,
   getUserEntered,
   deleteLogout,

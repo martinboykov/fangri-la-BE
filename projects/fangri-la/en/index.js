@@ -17,6 +17,8 @@ router.post('/auth/login', authController.postLogin);
 router.post('/auth/register', authController.postRegister);
 router.post('/auth/facebook', authController.postFacebookAuth);
 router.post('/auth/facebook/register', authController.postFacebookRegister);
+router.post('/auth/google', authController.postGoogleAuth);
+router.post('/auth/google/register', authController.postGoogleRegister);
 router.post('/auth/forgotten-password', authController.postForgottenPassword);
 router.post('/auth/consent', authController.postConsent);
 
